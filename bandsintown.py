@@ -3,10 +3,14 @@ import httplib
 import re
 import urllib
 
-_conn = httplib.HTTPConnection("api.bandsintown.com")
-app_id = "musichackdaysthlmtesting"
 
+_conn = httplib.HTTPConnection("api.bandsintown.com")
+app_id = None
+
+# Helper stuff
 def get_args():
+	if app_id is None:
+		raise InputException("app_id needs to be set!!")
 	return [("format", "json"), ("app_id", app_id)]
 
 slashes_re = re.compile('\\\/')
@@ -14,16 +18,25 @@ def clean_slashes_for_cjson(data):
 	return slashes_re.sub('/', data)
 
 def send_request(url, args = []):
-	print "%s?%s" % (url, urllib.urlencode(args + get_args()))
 	_conn.request("GET", "%s?%s" % (url, urllib.urlencode(args + get_args())))
 	req = _conn.getresponse()
 	if req.status != 200:
-		raise Exception("Request fail: %s" % req.read())
+		raise RequestException("Request fail: %s" % req.read())
 
 	return cjson.decode(clean_slashes_for_cjson(req.read()))
 
+class InputException(Exception):
+	pass
+
+class RequestException(Exception):
+	pass
+
 
 class Artist(object):
+	"""
+	Contains information about one artists. Also methods for getting
+	information about one artist or all events for an artist
+	"""
 	def __init__(self, name, url, mbid, upcomming_event_count):
 		self.name = name
 		self.url = url
@@ -39,7 +52,7 @@ class Artist(object):
 	@classmethod
 	def _send_request(cls, url, mbid=None, name=None):
 		if not mbid and not name or mbid and name:
-		  raise Exception("Just one of mbid and name can be set")
+		  raise InputException("Just one of mbid and name can be set")
 
 		if mbid:
 			name = "mbid_%s" % mbid
@@ -52,17 +65,23 @@ class Artist(object):
 
 	@classmethod
 	def events(cls, mbid=None, name=None):
+		"""
+		Get all events for one artist using either name or mbid
+		"""
 		data = Artist._send_request("/artists/%s/events", mbid, name)
 		return Event.parse_all(data)
 
 	@classmethod
 	def get(cls, mbid=None, name=None):
+		"""
+		Get information about the artist using either name or mbid
+		"""
 		data = Artist._send_request("/artists/%s", mbid, name)
 		return Artist.parse(data)
 
 class Event(object):
 
-	def __init__(self, id, url, ticket_url, ticket_status, datetime, on_date_datetime, artists, venue):
+	def __init__(self, id, url, ticket_url, ticket_status, datetime, on_date_datetime, artists, venue, status):
 		self.id = id
 		self.url = url
 		self.ticket_url = ticket_url
@@ -71,6 +90,7 @@ class Event(object):
 		self.on_date_datetime = on_date_datetime
 		self.artists = artists
 		self.venue = venue
+		self.status = status
 
 	def __repr__(self):
 		return repr({'id': self.id, 'url': self.url, 'ticket_url': self.ticket_url, 'ticket_status': self.ticket_status, 'datetime': self.datetime, 'on_date_datetime': self.on_date_datetime, 'artists': self.artists, 'venue': self.venue})
@@ -90,10 +110,16 @@ class Event(object):
 	def parse(cls, data):
 		artists = [Artist.parse(d) for d in data.get("artists", [])]
 		venue = Venue.parse(data.get('venue', {}))
-		return Event(data.get('id'), data.get('url'), data.get('ticket_url'), data.get('ticket_status'), data.get('datetime'), data.get('on_date_datetime'), artists, venue)
+		return Event(data.get('id'), data.get('url'), data.get('ticket_url'), data.get('ticket_status'), data.get('datetime'), data.get('on_date_datetime'), artists, venue, data.get('status'))
 
 	@classmethod
 	def generate_args(cls, mbids=None, artists=None, location=None, radius=None, date='upcoming', page=None, per_page=None):
+		if len(mbids or []) + len(artists or []) > 50:
+			raise InputException("Maximum 50 artists (mbids + artist names)")
+		if radius > 150:
+			raise InputException("Maximum radius is 150")
+		if per_page > 100:
+			raise InputException("Maximum 100 per page")
 		qs = []
 		if mbids:
 			for m in mbids:
@@ -115,16 +141,22 @@ class Event(object):
 
 	@classmethod
 	def search(cls, mbids=[], artists=[], location=None, radius=None, date=None, page=None, per_page=None):
+		"""
+		Search for events using mbids, name of artists or location
+		"""
 		if not (artists or mbids) and not location:
-			raise Exception("Must set either one artist or a location")
+			raise InputException("Must set either one artist or a location")
 
 		qs = Event.generate_args(mbids, artists, location, radius, date, page, per_page)
 		return Event.parse_all(send_request("/events/search", qs))
 
 	@classmethod
 	def recommended(cls, mbids=[], artists=[], location=None, radius=None, date=None, only_recs=None, page=None, per_page=None):
+		"""
+		Find recommended events using mbids, name of artists and location
+		"""
 		if not (artists or mbids) or not location:
-			raise Exception("Must set both one artist and a location")
+			raise InputException("Must set both one artist and a location")
 
 		qs = Event.generate_args(mbids, artists, location, radius, date, page, per_page)
 		if only_recs is not None:
@@ -156,16 +188,3 @@ class Venue(object):
 	@classmethod
 	def parse(cls, data):
 		return Venue(data.get('id'), data.get('name'), data.get('city'), data.get('region'), data.get('country'), data.get('url'), data.get('latitude'), data.get('longitude'))
-
-if __name__ == '__main__':
-  pass
-  #print Artist.get(mbid='65f4f0c5-ef9e-490c-aee3-909e7ae6b2ab')
-  #print Artist.events(mbid='65f4f0c5-ef9e-490c-aee3-909e7ae6b2ab')[0]
-  #print Event.daily()[0]
-  #print Event.search(None, 'Stockholm')[0]
-  events = Event.recommended(['65f4f0c5-ef9e-490c-aee3-909e7ae6b2ab'], None, 'Stockholm, Sweden')
-  for e in events:
-  	print e
-  	for a in e.artists:
-  		print a
-  	print
