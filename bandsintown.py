@@ -1,10 +1,8 @@
 import cjson
-import httplib
 import re
 import urllib
 
-
-_conn = httplib.HTTPConnection("api.bandsintown.com")
+base_url = "http://api.bandsintown.com"
 app_id = None
 
 # Helper stuff
@@ -18,12 +16,11 @@ def clean_slashes_for_cjson(data):
 	return slashes_re.sub('/', data)
 
 def send_request(url, args = []):
-	_conn.request("GET", "%s?%s" % (url, urllib.urlencode(args + get_args())))
-	req = _conn.getresponse()
-	if req.status != 200:
-		raise RequestException("Request fail: %s" % req.read())
+	response = urllib.urlopen(base_url + "%s?%s" % (url, urllib.urlencode(args + get_args())))
+	if response.getcode() != 200:
+		raise RequestException("Request fail: %s" % response.read())
 
-	return cjson.decode(clean_slashes_for_cjson(req.read()))
+	return cjson.decode(clean_slashes_for_cjson(response.read()))
 
 class InputException(Exception):
 	pass
